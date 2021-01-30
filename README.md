@@ -1,3 +1,5 @@
+#Active LSIMasks
+Active learning with LSIMask, for efficient training
 # LSIMasks
 Proposal-free instance segmentation from Latent Single-Instance Masks
 
