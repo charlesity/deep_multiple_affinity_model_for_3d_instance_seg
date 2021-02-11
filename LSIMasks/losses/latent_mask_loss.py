@@ -79,7 +79,6 @@ class LatentMaskLoss(nn.Module):
 
     def forward(self, all_predictions, target):
         mdl = self.model
-
         nb_inputs = mdl.number_multiscale_inputs
 
         # Plot some patches with the raw:

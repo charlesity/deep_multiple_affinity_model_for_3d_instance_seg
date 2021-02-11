@@ -139,3 +139,19 @@ class MaskDecoder(nn.Module):
         out = self.decoder_module(reshaped)
         out = self.final_activation(out)
         return out
+
+
+class MultipleOutputMaskDecoder(MaskDecoder):
+    def __init__(self,latent_variable_size=32,
+                 mask_shape=(5, 29, 29),
+                 feature_maps=16,
+                 target_index=0,
+                 crop_slice_prediction=None,
+                 mask_dws_fact=(1, 1, 1),
+                 pred_dws_fact=(1, 1, 1),
+                 sample_strides=(1, 1, 1),
+                 limit_nb_decoded_masks_to=None,
+                 max_random_crop=(0, 0, 0), nb_output = 4):
+        super(MaskDecoder).__init__(latent_variable_size,mask_shape,feature_maps,target_index,crop_slice_prediction,mask_dws_fact,pred_dws_fact,sample_strides,limit_nb_decoded_masks_to,
+                                    max_random_crop)
+

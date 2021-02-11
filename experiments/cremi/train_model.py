@@ -1,3 +1,5 @@
+from LSIMasks.active_inferno_mixin import ActiveInfernoMixin
+
 from LSIMasks.utils.various import change_paths_config_file
 
 from speedrun import BaseExperiment, TensorboardMixin, InfernoMixin, FirelightLogger
@@ -36,7 +38,8 @@ import confnets
 # torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = True
 
-class BaseCremiExperiment(BaseExperiment, InfernoMixin, TensorboardMixin):
+#modifying this class to use ActiveInfernoMixin and ActiveTrainers
+class BaseCremiExperiment(BaseExperiment, ActiveInfernoMixin, TensorboardMixin):
     def __init__(self, experiment_directory=None, config=None):
         super(BaseCremiExperiment, self).__init__(experiment_directory)
         # Privates
@@ -148,6 +151,7 @@ class BaseCremiExperiment(BaseExperiment, InfernoMixin, TensorboardMixin):
         self._trainer.build_criterion(loss)
         self._trainer.build_validation_criterion(loss)
 
+
     def build_train_loader(self):
         kwargs = recursive_dict_update(self.get('loaders/train'), deepcopy(self.get('loaders/general')))
         return get_cremi_loader(kwargs)
@@ -168,6 +172,7 @@ if __name__ == '__main__':
     assert "--DATA_HOMEDIR" in sys.argv, "Script parameter DATA_HOMEDIR is missing"
     idx = sys.argv.index('--DATA_HOMEDIR')
     DATA_HOMEDIR = sys.argv.pop(idx+1)
+
     DATA_HOMEDIR = DATA_HOMEDIR if DATA_HOMEDIR.endswith('/') else DATA_HOMEDIR + '/'
     sys.argv.pop(idx)
 
