@@ -1,5 +1,6 @@
 from torch import nn
 import numpy as np
+from torch import randn, argmax
 
 from confnets.blocks import SamePadResBlock
 from confnets.models import MultiScaleInputMultiOutputUNet
@@ -31,6 +32,33 @@ class LatentMaskModel(MultiScaleInputMultiOutputUNet):
         # Build one Mask decoder per branch:
         self.mask_decoders = nn.ModuleList([
             MaskDecoder(**kwgs) for kwgs in all_mask_decoder_kwargs
+        ])
+
+# ----------------------------------
+# Multiple output latent mask model
+# ----------------------------------
+class MultiOutputLatentMaskModel(MultiScaleInputMultiOutputUNet):
+    def __init__(self, *super_args, mask_decoders_kwargs=None, **super_kwargs):
+        super(MultiOutputLatentMaskModel, self).__init__(*super_args, **super_kwargs)
+
+        assert mask_decoders_kwargs is not None, "Specs for mask-decoders are required."
+        global_kwargs = mask_decoders_kwargs.pop("global", {})
+        self.nb_mask_decoders = nb_mask_decoders = len(mask_decoders_kwargs.keys())
+        all_mask_decoder_kwargs = [deepcopy(global_kwargs) for _ in range(nb_mask_decoders)]
+
+        assert len(all_mask_decoder_kwargs) == len(self.output_branches_specs), \
+            "The passed mask_decoders_kwargs do not match with the number of output branches in the UNet model"
+
+
+        for i in range(nb_mask_decoders):
+            all_mask_decoder_kwargs[i].update(mask_decoders_kwargs[i])
+
+            # Deduce the size of the latent_variable from the output_size of the UNet branch:
+            all_mask_decoder_kwargs[i]["latent_variable_size"] = self.output_branches_specs[i]["out_channels"]
+
+        # Build one Mask decoder per branch:
+        self.mask_decoders = nn.ModuleList([
+            MultipleOutputMaskDecoder(**kwgs) for kwgs in all_mask_decoder_kwargs
         ])
 
 
@@ -151,7 +179,76 @@ class MultipleOutputMaskDecoder(MaskDecoder):
                  pred_dws_fact=(1, 1, 1),
                  sample_strides=(1, 1, 1),
                  limit_nb_decoded_masks_to=None,
-                 max_random_crop=(0, 0, 0), nb_output = 4):
-        super(MaskDecoder).__init__(latent_variable_size,mask_shape,feature_maps,target_index,crop_slice_prediction,mask_dws_fact,pred_dws_fact,sample_strides,limit_nb_decoded_masks_to,
+                 max_random_crop=(0, 0, 0), nb_mask_output = 4, channel_based_multiple_ouput = False, nb_sub_outputs = 4):
+
+        super(MultipleOutputMaskDecoder, self).__init__(latent_variable_size
+                                                  ,mask_shape
+                                                  ,feature_maps
+                                                  ,target_index
+                                                  ,crop_slice_prediction
+                                                  ,mask_dws_fact
+                                                  ,pred_dws_fact
+                                                  ,sample_strides
+                                                  ,limit_nb_decoded_masks_to,
                                     max_random_crop)
+
+        if channel_based_multiple_ouput:
+            self.multiple_final = SamePadResBlock(feature_maps, f_inner=feature_maps,
+                        f_out=nb_mask_output,
+                        dim=3,
+                        pre_kernel_size=(3, 3, 3),
+                        kernel_size=(3, 3, 3),
+                        activation="ReLU",
+                        normalization="GroupNorm",
+                        nb_norm_groups=1,
+                        apply_final_activation=True,
+                        apply_final_normalization=True)
+
+
+            rd_input = randn([1, feature_maps, *mask_shape])
+            output_shape = self.multiple_final(rd_input).shape[1:]
+            input_features_weight = np.prod(output_shape)
+            self.prediction_weights = nn.Linear(input_features_weight, nb_mask_output)
+        else:
+            self.multiple_output_branches = [SamePadResBlock(feature_maps, f_inner=feature_maps,
+                        f_out=1,
+                        dim=3,
+                        pre_kernel_size=(3, 3, 3),
+                        kernel_size=(3, 3, 3),
+                        activation="ReLU",
+                        normalization="GroupNorm",
+                        nb_norm_groups=1,
+                        apply_final_activation=True,
+                        apply_final_normalization=True) for i in range(nb_mask_output)]
+
+
+    def forward(self, encoded_variable):
+            out_linear = self.linear_base(encoded_variable)
+            N1 = out_linear.shape[0]
+            reshaped = out_linear.view(N1, -1, *self.min_path_shape)
+
+
+            #during training return multiple predictions and the weight of each prediction
+            if self.training:
+                out_multiple = self.multiple_final(reshaped)
+                N2 = out_multiple.shape[0]
+                reshape2 = out_multiple.view(N2, -1)
+                pred_weights_out = self.prediction_weights(reshape2)
+                predict_prob = nn.functional.softmax(pred_weights_out, dim=1)
+                return [out_multiple, predict_prob]
+            else:
+                # during test/validation return the best prediction
+                N2 = out_multiple.shape[0]
+                reshape2 = out_multiple.view(N2, -1)
+                pred_weights_out = self.prediction_weights(reshape2)
+                predict_prob = nn.functional.softmax(pred_weights_out, dim=1)
+                index = argmax(predict_prob, dim=1)
+                return [out_multiple[:,index,:,:,:]]
+
+
+
+
+
+
+
 

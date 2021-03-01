@@ -4,26 +4,25 @@ from inferno.utils import torch_utils as thu
 
 
 
-
 class ActiveTrainer(Trainer):
+    def __init__(self, model=None, active_sl=False, mellow_learning = True):
+        super(ActiveTrainer, self).__init__(model)
+        self._active_sl = active_sl
+        self._mellow_learning = mellow_learning
 
-    def __init__(self, model=None, active_training=True):
-        if model is not None:
-            super().__init__(model)
-            self._active_training = active_training
-            self._mellow_learning = False
+
     @property
-    def active_training(self):
-        return self._active_training
+    def active_sl(self):
+        return self._active_sl
     
-    @active_training.setter
-    def active_training(self,  flag):
-        self._active_training = flag
+    @active_sl.setter
+    def active_sl(self,  flag):
+        self._active_sl = flag
 
     def train_for(self, num_iterations=None, break_callback=None):
         # revert to standard training if active learning not true
-        if not self._active_training:
-            super().train_for(num_iterations, break_callback)
+        if not self._active_sl:
+            super(ActiveTrainer, self).train_for(num_iterations, break_callback)
         else:
             print("Active training starts here")
             ## implement interactive training here

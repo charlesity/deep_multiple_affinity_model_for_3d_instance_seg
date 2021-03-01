@@ -329,7 +329,7 @@ model:
     res_blocks_specs_decoder: [[True], [True], [True], [True]]
     encoder_fmaps: [32, 64, 128, 256]
     decoder_fmaps: [48, 64, 128, 256]
-    return_input: True
+    return_input: False   # returns input as an additional prediction
     number_multiscale_inputs: 1
     in_channels: 1
     scale_factor: [1, 2, 2]
@@ -402,12 +402,7 @@ trainer:
     loss_name: "LSIMasks.losses.latent_mask_loss.LatentMaskLoss"
     kwargs:
       loss_type: "Dice" # "MSE"
-      apply_checkerboard: False
-      glia_label: 1
       boundary_label: 2
-      defected_label: 3
-      train_glia_mask: True
-      train_patches_on_glia: True
 
 
 
@@ -467,7 +462,6 @@ trainer:
 firelight:
   pcaEmbeddings_lvl0:
     ImageGridVisualizer:
-
       input_mapping:
         global: [B: ":", D: "2:7"] # the mapping specified in 'global' is applied to all keys
 #        global: [B: ":", D: ":"] # the mapping specified in 'global' is applied to all keys
@@ -481,17 +475,16 @@ firelight:
 
       # Container visualizers always have the 'visualizers' argument. Its value has to be a list of visualizers
       visualizers:
-
         #        # visualize raw input
         - SegmentationVisualizer:
-            input: ['target', index: 0, C: 0, W: "24:-24", H: "24:-24"]
+            input: [ 'target', index: 0, C: 0, W: "24:-24", H: "24:-24" ]
             background_label: 0
         - IdentityVisualizer:
             input: ['inputs', index: 0, W: "24:-24", H: "24:-24"]
             cmap: gray
         - PcaVisualizer:
             input: ['prediction', index: 0]
-        - PcaVisualizer:
-            input: ['prediction', index: 1]
 #        - PcaVisualizer:
 #            input: ['prediction', index: 2]
+
+

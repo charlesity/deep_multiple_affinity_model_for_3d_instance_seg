@@ -13,6 +13,7 @@ import os
 import torch
 import torch.nn as nn
 
+
 # from inferno.trainers.callbacks.essentials import SaveAtBestValidationScore
 from neurofire.criteria.loss_wrapper import LossWrapper
 from inferno.extensions.criteria.set_similarity_measures import SorensenDiceLoss
@@ -38,8 +39,8 @@ import confnets
 # torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = True
 
-
-class BaseCremiExperiment(BaseExperiment, InfernoMixin, TensorboardMixin):
+#modifying this class to use ActiveInfernoMixin and ActiveTrainers
+class BaseCremiExperiment(BaseExperiment, ActiveInfernoMixin, TensorboardMixin):
     def __init__(self, experiment_directory=None, config=None):
         super(BaseCremiExperiment, self).__init__(experiment_directory)
         # Privates
@@ -47,8 +48,6 @@ class BaseCremiExperiment(BaseExperiment, InfernoMixin, TensorboardMixin):
         self._meta_config['exclude_attrs_from_save'] = ['data_loader', '_device']
         if config is not None:
             self.read_config_file(config)
-
-
         self.DEFAULT_DISPATCH = 'train'
         self.auto_setup()
 
@@ -120,7 +119,6 @@ class BaseCremiExperiment(BaseExperiment, InfernoMixin, TensorboardMixin):
         #         mdl_state_dict = torch.load(stck_mdl_path)["_model"].models[mdl].state_dict()
         #         model.models[mdl].load_state_dict(mdl_state_dict)
 
-
         return model
 
     def set_devices(self):
@@ -135,9 +133,10 @@ class BaseCremiExperiment(BaseExperiment, InfernoMixin, TensorboardMixin):
         self.trainer.cuda([0])
 
     def inferno_build_criterion(self):
-        print("Building criterion")
+        print("Start: Inferno Build criterion")
         loss_kwargs = self.get("trainer/criterion/kwargs", {})
-        loss_name = self.get("trainer/criterion/loss_name", "LSIMasks.losses.latent_mask_loss.LatentMaskLoss")
+        loss_name = self.get("trainer/criterion/loss_name", "LSIMasks.losses.latent_mask_loss.MultiOutputLatentMaskLoss")
+
         loss_config = {loss_name: loss_kwargs}
         loss_config[loss_name]['model'] = self.model
         if "model_kwargs" in self.get('model'):
@@ -150,7 +149,7 @@ class BaseCremiExperiment(BaseExperiment, InfernoMixin, TensorboardMixin):
         loss = create_instance(loss_config, self.CRITERION_LOCATIONS)
         self._trainer.build_criterion(loss)
         self._trainer.build_validation_criterion(loss)
-
+        print("Done: Inferno Build criterion")
 
     def build_train_loader(self):
         kwargs = recursive_dict_update(self.get('loaders/train'), deepcopy(self.get('loaders/general')))
