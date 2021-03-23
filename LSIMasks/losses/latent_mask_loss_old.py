@@ -16,7 +16,6 @@ from segmfriends.utils.various import parse_data_slice
 from segmfriends.transform.volume import DownSampleAndCropTensorsInBatch
 from segmfriends.utils.various import parse_data_slice
 
-from .DiscoNet_Loss import DiscoNetLoss
 from ..utils.various import auto_crop_tensor_to_shape
 from .sparse_affinitiees_loss import MultiLevelSparseAffinityLoss
 
@@ -310,8 +309,6 @@ class MultiOutputLatentMaskLoss(LatentMaskLoss):
                  model_kwargs=None, devices=(0, 1))
 
         self.probabilistic_model = probabilistic_model
-        self.discoNetLoss = DiscoNetLoss(self.model, self.loss, self.devices)
-
 
         self.multiple_output_subvector_length = multiple_output_subvector_length
         self.active_sl = active_sl
@@ -473,16 +470,41 @@ class MultiOutputLatentMaskLoss(LatentMaskLoss):
                 # Delete non-valid patches from batch:
                 valid_batch_indices = np.argwhere(valid_patches[:, 0, 0, 0, 0].cpu().detach().numpy())[:, 0]
 
-                if max_nb_masks is not None:
-                    limit = max_nb_masks[0]
-                    if max_nb_masks[1] == 'number':
-                        if valid_batch_indices.shape[0] > limit:
-                            valid_batch_indices = np.random.choice(valid_batch_indices, limit, replace=False)
-                    elif max_nb_masks[1] == 'factor':
-                        assert limit <= 1. and limit >= 0.
-                        valid_batch_indices = np.random.choice(valid_batch_indices,
-                                                               int(limit * valid_batch_indices.shape[0]), replace=False)
+                batch_cords = np.array([( int(i/label_at_patch_center.shape[0]), i%label_at_patch_center.shape[1]) for i in valid_batch_indices])
 
+                embedding_scores = score_InverseEntropy(selected_embeddings[:, :, 0, 0, 0], mask_dec, self.devices)
+                if self.active_sl:
+                    # index of entroy from min to max
+                    _ , idx_order = torch.sort(embedding_scores,  descending=True) ## Max entropy
+                    if max_nb_masks is not None:
+                        if self.query_size[mask_dec_indx] == None:
+                            self.query_size[mask_dec_indx] = max_nb_masks[0]
+                            # if valid_batch_indices.shape[0] > self.query_size[mask_dec_indx]:
+                            #     valid_batch_indices = idx_order[:self.query_size[mask_dec_indx]]
+                        else:
+                            deltas = self.delta_val_loss[mask_dec_indx] + self.delta_mask_loss[mask_dec_indx]
+                            # query_size = int(self.query_size[mask_dec_indx] - self.query_step_rate*deltas * self.query_size[mask_dec_indx])
+                            # if query_size > 0:
+                            #     self.query_size[mask_dec_indx] = query_size
+                            # if valid_batch_indices.shape[0] > self.query_size[mask_dec_indx]:
+                            valid_batch_indices = idx_order[:self.query_size[mask_dec_indx]]
+
+                # else then random selection
+                else:
+                    if max_nb_masks is not None:
+                        limit = max_nb_masks[0]
+                        if max_nb_masks[1] == 'number':
+                            if valid_batch_indices.shape[0] > limit:
+                                valid_batch_indices = np.random.choice(valid_batch_indices, limit, replace=False)
+                        elif max_nb_masks[1] == 'factor':
+                            assert limit <= 1. and limit >= 0.
+                            valid_batch_indices = np.random.choice(valid_batch_indices,
+                                                                   int(limit * valid_batch_indices.shape[0]), replace=False)
+
+                #log information related to both settings - active and random
+                if not self.al_first_run:
+                    if nb_stride == 0:
+                        log_scalar("Mask_delta_loss/level{}".format(mask_dec_indx), self.delta_mask_loss[mask_dec_indx])  # change in mask training loss
 
                 if valid_batch_indices.shape[0] == 0:
                     # Avoid problems if all patches are invalid and
@@ -525,57 +547,77 @@ class MultiOutputLatentMaskLoss(LatentMaskLoss):
                 # ----------------------------
                 # Decode the actual predicted using the decoder models:
                 # ----------------------------
-                # decoded_masks = data_parallel(mask_dec, selected_embeddings, self.devices)
+                decoded_list = data_parallel(mask_dec, selected_embeddings, self.devices)
+                if mask_dec.training:
+                    #unpack the prediction and associated weights for channel
+                    decoded_masks, prediction_weights = decoded_list[0],decoded_list[1]
+                else:
+                    decoded_masks = decoded_list[0]
 
-                with warnings.catch_warnings(record=True) as w:
-                    reconstruction_loss = data_parallel(self.discoNetLoss, (selected_embeddings, .5, target_me_masks.float(), ignore_masks.float()),
-                                                        self.devices).mean()
-                # loss_sum = 0
-                # for a_selected_embedding, a_target_mask, an_ignore_mask in zip(selected_embeddings, target_me_masks, ignore_masks):
-                #     loss_sum+= self.discoNetLoss(a_selected_embedding, .5, a_target_mask.float(), an_ignore_mask.float())
-                # loss_sum /=selected_embeddings.shape[0]
-                #
-                # print (loss_sum)
+                # ----------------------------
+                # Apply ignore mask and compute loss:
+                # ----------------------------
+                min_loss = float('inf') #zero means very bad
+                min_loss_index = None
+                weight_loss = 0
 
+                valid_masks = 1. - ignore_masks.float()
+                target_me_masks = target_me_masks * valid_masks
 
+                if nb_stride == 0:
+                    log_image("mask_predict".format(mask_dec_indx), decoded_masks)
+                    log_image("mask_target".format(mask_dec_indx), target_me_masks)
 
-                #
-                # # ----------------------------
-                # # Apply ignore mask and compute loss:
-                # # ----------------------------
-                # valid_masks = 1. - ignore_masks.float()
-                # decoded_masks = decoded_masks * valid_masks
-                # target_me_masks = target_me_masks * valid_masks
-                # with warnings.catch_warnings(record=True) as w:
-                #     reconstruction_loss = data_parallel(self.discoNetLoss, (decoded_masks, target_me_masks.float(), .5),
-                #                                         self.devices).mean()
+                if not mask_dec.training:
+                    #implies validation hence go ahead and calculate the predictive loss
+                    sub_multple_output_vec = [0]
+                else:
+                    sub_multple_output_vec = np.random.choice(decoded_masks.shape[1], self.multiple_output_subvector_length, replace=False)
 
-                loss = loss + reconstruction_loss
-                print(loss)
-            #     if nb_stride == 0:
-            #         # log_scalar("Mask_deltas/level{}".format(mask_dec_indx), deltas)  # sum of all changes
-            #         if self.active_sl:
-            #             log_scalar("Mask_Query_size/level{}".format(mask_dec_indx),self.query_size[mask_dec_indx])  # number of active queries
-            #         log_scalar("Mask_loss/level{}".format(mask_dec_indx), min_loss)  # mask training loss
-            #         log_scalar("Prediction_Net_loss/level{}".format(mask_dec_indx), weight_loss)
-            #         log_scalar("Total_decoder_loss/level{}".format(mask_dec_indx), loss)  # mask training loss
-            #         log_scalar("nb_patches/level{}".format(mask_dec_indx), decoded_masks.shape[0])
-            #         log_scalar("avg_targets/level{}".format(mask_dec_indx), target_me_masks.float().mean())
-            #
-            #     #track training and val losses
-            #     if self.al_first_run == None:
-            #         self.active_mask_loss[mask_dec_indx] = min_loss # set it if it wasnt there before
-            #     else:
-            #         self.delta_mask_loss[mask_dec_indx] = min_loss - self.active_mask_loss[mask_dec_indx]  #update it
-            #         self.active_mask_loss[mask_dec_indx] = min_loss #update mask training loss
-            #
-            #     if not mask_dec.training:
-            #         log_scalar("Mask_val_loss/level{}".format(mask_dec_indx),self.active_val_losses[mask_dec_indx])  #
-            #         log_scalar("Mask_delta_val_loss/level{}".format(mask_dec_indx),self.delta_val_loss[mask_dec_indx])  #
-            #         log_scalar("Prediction_Net_val_loss/level{}".format(mask_dec_indx), weight_loss)
-            #         self.delta_val_loss[mask_dec_indx] =  min_loss - self.active_val_losses[mask_dec_indx]
-            #         self.active_val_losses[mask_dec_indx] = min_loss
-            # self.al_first_run = False
+                # fetch the minimum loss from the channels
+                for output_index in sub_multple_output_vec:
+                    an_output = decoded_masks[:,output_index, :,:,:].unsqueeze(1)
+                    an_output = an_output * valid_masks
+                    with warnings.catch_warnings(record=True) as w:
+                        reconstruction_loss = data_parallel(self.loss, (an_output, target_me_masks.float()),
+                                                            self.devices).mean()
+                    if (reconstruction_loss < min_loss):
+                        min_loss = reconstruction_loss
+                        min_loss_index = output_index
+
+                #only do this for training where mask predicts two outputs
+                if mask_dec.training:
+                    min_weight_loss_mask = np.zeros(shape=(prediction_weights.shape[0]), dtype=np.long)+min_loss_index
+                    weight_groundtruth_label = torch.tensor(min_weight_loss_mask)
+                    with warnings.catch_warnings(record=True) as w:
+                        weight_loss = data_parallel(nn.CrossEntropyLoss(), (prediction_weights, weight_groundtruth_label),
+                                                                    self.devices).mean()
+                loss = loss + min_loss + weight_loss
+
+                if nb_stride == 0:
+                    # log_scalar("Mask_deltas/level{}".format(mask_dec_indx), deltas)  # sum of all changes
+                    if self.active_sl:
+                        log_scalar("Mask_Query_size/level{}".format(mask_dec_indx),self.query_size[mask_dec_indx])  # number of active queries
+                    log_scalar("Mask_loss/level{}".format(mask_dec_indx), min_loss)  # mask training loss
+                    log_scalar("Prediction_Net_loss/level{}".format(mask_dec_indx), weight_loss)
+                    log_scalar("Total_decoder_loss/level{}".format(mask_dec_indx), loss)  # mask training loss
+                    log_scalar("nb_patches/level{}".format(mask_dec_indx), decoded_masks.shape[0])
+                    log_scalar("avg_targets/level{}".format(mask_dec_indx), target_me_masks.float().mean())
+
+                #track training and val losses
+                if self.al_first_run == None:
+                    self.active_mask_loss[mask_dec_indx] = min_loss # set it if it wasnt there before
+                else:
+                    self.delta_mask_loss[mask_dec_indx] = min_loss - self.active_mask_loss[mask_dec_indx]  #update it
+                    self.active_mask_loss[mask_dec_indx] = min_loss #update mask training loss
+
+                if not mask_dec.training:
+                    log_scalar("Mask_val_loss/level{}".format(mask_dec_indx),self.active_val_losses[mask_dec_indx])  #
+                    log_scalar("Mask_delta_val_loss/level{}".format(mask_dec_indx),self.delta_val_loss[mask_dec_indx])  #
+                    log_scalar("Prediction_Net_val_loss/level{}".format(mask_dec_indx), weight_loss)
+                    self.delta_val_loss[mask_dec_indx] =  min_loss - self.active_val_losses[mask_dec_indx]
+                    self.active_val_losses[mask_dec_indx] = min_loss
+            self.al_first_run = False
         gc.collect()
         return loss
 

@@ -305,8 +305,6 @@ model:
 
   model_class: LSIMasks.models.latent_mask_model.MultiOutputLatentMaskModel
   model_kwargs:
-    multiple_output_class: &multiple_output_class 'LSIMasks.models.DISCONet.DISCONet'
-#    multiple_output_class: &multiple_output_class ''
     depth: 3
     upsampling_mode: 'nearest'
     res_blocks_specs: [[True], [True], [True], [True]]
@@ -330,7 +328,8 @@ model:
       0: {depth: 0, normalization: GroupNorm}
     mask_decoders_kwargs:
       0:
-        nb_mask_output: 4
+        nb_mask_output: 6
+        probabilistic_model: &probabilistic_model True
         multiple_decoder_option: 'branches'
         feature_maps: 16
         crop_slice_prediction: "2:-2,:,:" # Pre-crop part of embeddings prediction-tensor to avoid training on borders
@@ -353,8 +352,9 @@ trainer:
     kwargs:
       loss_type: "Dice" # "MSE"
       multiple_output_subvector_length: 3
-      active_sl: False
+      active_sl: True   #active selection for loss
       query_step_rate: .0001
+      probabilistic_model: *probabilistic_model
 #      boundary_label: 2
 
   optimizer:
@@ -409,56 +409,56 @@ trainer:
         verbose: True
 
 
-#firelight:
-#  pcaEmbeddings_lvl0:
-#    ImageGridVisualizer:
-#      input_mapping:
-#        global: [B: ":", D: "2:7"] # the mapping specified in 'global' is applied to all keys
-##        global: [B: ":", D: ":"] # the mapping specified in 'global' is applied to all keys
-#
-#      pad_width: 1  # width of the border between images in pixels
-#      pad_value: .2  # intensity of the border pixels
-#      upsampling_factor: 2  # the whole grid is upsampled by this factor
-#
-#      row_specs: ['H', 'S', 'B', 'V']
-#      column_specs: ['W', 'C', 'D', ]
-#
-#      # Container visualizers always have the 'visualizers' argument. Its value has to be a list of visualizers
-#      visualizers:
-#        #        # visualize raw input
-#        - SegmentationVisualizer:
-#            input: [ 'target', index: 0, C: 0, W: "8:-8", H: "8:-8" ]
-#            background_label: 0
-#        - IdentityVisualizer:
-#            input: ['inputs', index: 0, W: "8:-8", H: "8:-8"]
-#            cmap: gray
-#        - PcaVisualizer:
-#            input: ['prediction', index: 0]
-#
-#  mask_visualizer:
-#    ImageGridVisualizer:
-#      input_mapping:
-#        global: [B: "0"] #the mapping specified in 'global' is applied to all keys. Show only 1 samples in each batch ('B')
-#
-#      pad_width: 1  # width of the border between images in pixels
-#      pad_value: .2  # intensity of the border pixels
-#      upsampling_factor: 8  # the whole grid is upsampled by this factor
-#
-##      row_specs: [ 'H', 'C', 'V' ]
-##      column_specs: [ 'W', 'D', ]
-#
-#      # Container visualizers always have the 'visualizers' argument. Its value has to be a list of visualizers
-#      visualizers:
-#
-#        #        # visualize raw input
-#        #        - SegmentationVisualizer:
-#        #            input: [ 'target', index: 0, C: 0, W: "24:-24", H: "24:-24" ]
-#        #            background_label: 0
-#        - IdentityVisualizer:
-#            input: [ 'mask_predict']
-#            cmap: gray
-#        - IdentityVisualizer:
-#            input: [ 'mask_target']
-#            cmap: gray
-#
+firelight:
+  pcaEmbeddings_lvl0:
+    ImageGridVisualizer:
+      input_mapping:
+        global: [B: ":", D: "2:7"] # the mapping specified in 'global' is applied to all keys
+#        global: [B: ":", D: ":"] # the mapping specified in 'global' is applied to all keys
+
+      pad_width: 1  # width of the border between images in pixels
+      pad_value: .2  # intensity of the border pixels
+      upsampling_factor: 2  # the whole grid is upsampled by this factor
+
+      row_specs: ['H', 'S', 'B', 'V']
+      column_specs: ['W', 'C', 'D', ]
+
+      # Container visualizers always have the 'visualizers' argument. Its value has to be a list of visualizers
+      visualizers:
+        #        # visualize raw input
+        - SegmentationVisualizer:
+            input: [ 'target', index: 0, C: 0, W: "8:-8", H: "8:-8" ]
+            background_label: 0
+        - IdentityVisualizer:
+            input: ['inputs', index: 0, W: "8:-8", H: "8:-8"]
+            cmap: gray
+        - PcaVisualizer:
+            input: ['prediction', index: 0]
+
+  mask_visualizer:
+    ImageGridVisualizer:
+      input_mapping:
+        global: [B: "0"] #the mapping specified in 'global' is applied to all keys. Show only 1 samples in each batch ('B')
+
+      pad_width: 1  # width of the border between images in pixels
+      pad_value: .2  # intensity of the border pixels
+      upsampling_factor: 8  # the whole grid is upsampled by this factor
+
+#      row_specs: [ 'H', 'C', 'V' ]
+#      column_specs: [ 'W', 'D', ]
+
+      # Container visualizers always have the 'visualizers' argument. Its value has to be a list of visualizers
+      visualizers:
+
+        #        # visualize raw input
+        #        - SegmentationVisualizer:
+        #            input: [ 'target', index: 0, C: 0, W: "24:-24", H: "24:-24" ]
+        #            background_label: 0
+        - IdentityVisualizer:
+            input: [ 'mask_predict']
+            cmap: gray
+        - IdentityVisualizer:
+            input: [ 'mask_target']
+            cmap: gray
+
 
